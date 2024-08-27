@@ -6,6 +6,7 @@ from __init__ import app
 from api.jwt_authorize import token_required
 from model.user import User
 from model.github import GitHubUser
+from model.kasm import UpdateUser
 
 user_api = Blueprint('user_api', __name__,
                    url_prefix='/api')
@@ -61,6 +62,7 @@ class UserAPI:
                                 
             
             return jsonify(results) 
+    
             
     class _CRUD(Resource):  # Users API operation for Create, Read, Update, Delete 
         def post(self): # Create method

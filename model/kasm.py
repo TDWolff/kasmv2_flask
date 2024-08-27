@@ -28,21 +28,6 @@ class KasmUtils:
         except requests.RequestException as e:
             return None, {'message': 'Failed to authenticate', 'code': 500, 'error': str(e)}
         return response, None
-    
-    @staticmethod
-    def get_authenticated_config():
-        '''Utility method to combine get_config and authenticate''' 
-        config, error = KasmUtils.get_config()
-        if error:
-            return None, error
-
-        _, error = KasmUtils.authenticate(config)
-        if error:
-            return None, error
-
-        # Return KASM API keys
-        return config, None
-
 
     @staticmethod
     def get_user_id(users, uid):
@@ -73,43 +58,6 @@ class KasmUtils:
         except:
             return None, {'message': 'Failed to get users', 'code': 500}
         return users, None
-    
-    @staticmethod
-    def get_kasm_user_id(config, uid):
-        '''Utility method to combine get_users and get_user_id'''
-        # Extract all KASM users
-        users, error = KasmUtils.get_users(config)
-        if error:
-            return None, error
-        
-        # find the requested user_id
-        user_id = KasmUtils.get_user_id(users, uid)
-        if user_id is None:
-            return None, {'message': f'Kasm user {uid} not found', 'code': 404}
-       
-        # Return KASM user_id, this is KASM internal reference number 
-        return user_id, None
-        
-    
-    @staticmethod
-    def get_groups(config):
-        '''Utility method to get all KASM groups'''
-        SERVER, API_KEY, API_KEY_SECRET = config
-        try:
-            # Kasm API to get all groups
-            url = SERVER + "/api/public/get_groups"
-            data = {
-                "api_key": API_KEY,
-                "api_key_secret": API_KEY_SECRET
-            }
-            response = requests.post(url, json=data)
-            if response.status_code != 200:
-                return None, {'message': 'Failed to get groups', 'code': response.status_code}
-
-            groups = response.json()['groups']  # This should be your groups list
-        except:
-            return None, {'message': 'Failed to get groups', 'code': 500}
-        return groups, None
     
     @staticmethod
     def create_user(config, uid, first_name, last_name, password):
@@ -188,48 +136,38 @@ class KasmUtils:
         return response, None
     
     @staticmethod
-    def update_user_group(config, user_id, new_group):
+    def update_ug_logic(config, uid, new_group):
         '''Utility method to update a KASM user'''
         SERVER, API_KEY, API_KEY_SECRET = config  # Unpack the configuration variables
 
         try:
             # find previous group and remove it via get user details
-            response, error = KasmUtils.get_user_details(config, user_id)
+            response, error = KasmUtils.get_user_details(config, uid)
             if error:
                 return None, error
-           
-            # Check if the user is already in the target group 
-            user_groups = response.json()['user']['groups']
-            for group in user_groups:
-                if 'name' in group:
-                    if group['group_id'] == new_group:
-                        return None, {'message': 'User is already in the target group', 'code': 200}
-                        break
             
-            # Check if the target group exists        
-            all_groups, error = KasmUtils.get_groups(config)
-            group_id = None
-            for group in all_groups:
-                if group['name'] == new_group:
-                    group_id = group['group_id']
+            groups = response.json()['user']['groups']
+            for group in groups:
+                if 'group_id' in group:
+                    current_group = group['group_id']
                     break
+
+            # If the user is already in the target group, return
+            if current_group == new_group:
+                return None, {'message': 'User is already in the target group', 'code': 200}
             
-            # Abort if the group does not exist 
-            if group_id is None:
-                return None, {'message': 'Group not found', 'code': 404}     
-                    
             # Kasm API to update a user
             url = SERVER + "/api/public/add_user_group"  # Define the API endpoint URL
 
             # Prepare the data to be sent in the POST request
             data = {
-                "api_key": API_KEY, # API key for authentication
+                "api_key":API_KEY, # API key for authentication
                 "api_key_secret": API_KEY_SECRET, # API key secret for authentication
                 "target_user": {
-                    "user_id": user_id 
+                    "user_id": uid
                 },
                 "target_group": {
-                    "group_id": group_id
+                    "group_id": new_group
                 }
             }
 
@@ -239,32 +177,83 @@ class KasmUtils:
             # Check the status code of the response
             if response.status_code != 200:
                 return None, response  # If the status code is not 200, return None and the response
-            
-            return response, None  # If the status code is 200, return the response and None
 
         # Handle any exceptions that occur during the request
         except requests.RequestException as e:
             # Return None and an error message if the request fails
             return None, {'message': 'Failed to update user', 'code': 500, 'error': str(e)}
         
+class UpdateUser:
+    def group_change(uid, new_group):
+        '''
+        Interface to update a KASM user group
+        Why this method does not fail? Even if the user is not found or not updated.
+        This method does not fail as Kasm is a complementary and 3rd party service. 
+        If failure occurs, admin or user will try again.
+        
+        uid: User ID to update
+        new_group: New group name
+        '''
+        
+        config, error = KasmUtils.get_config()
+        if error:
+            print(error)
+            return
+        if config is None:
+            print("Configuration is missing")
+            return
+        
+        # Check if KASM keys can authenticate, the "_" means data is not used
+        _, error = KasmUtils.authenticate(config)
+        if error:
+            print(error)
+            return
+        
+        # Extract all KASM users
+        users, error = KasmUtils.get_users(config)
+        if error:
+            print(error)
+            return
+        
+        # find the requested user_id, and get all the info out of it ie the last name, first name, password, all of it
+        kasm_user_id = KasmUtils.get_user_id(users, uid)
+        if kasm_user_id is None:
+            print({'message': f'Kasm user {uid} not found for update', 'code': 404})
+            return
+        
+        # update users group
+        response, error = KasmUtils.update_ug_logic(config, kasm_user_id, new_group)
+        if error:
+            print(error)
+            return
+
+
+        return response
+
 class KasmUser:
     def post(self, name, uid, password):
         '''
         Interface to create a KASM user
-        Why this method does not throw exception? Even if the user is not created.
+        Why this method does not fail? Even if the user is created.
         This method does not fail as Kasm is a complementary and 3rd party service. 
-        If failure occurs, admin or user will be required totry again.
+        If failure occurs, admin or user will try again.
         
         uid: User ID to delete
         username: Should be set to username for all use cases, the changes between uid and username are getting confusing.
         '''
-       
-        # Get KASM API keys 
-        config, error = KasmUtils.get_authenticated_config()
+        
+        # Get KASM keys
+        config, error = KasmUtils.get_config()
+        if error:
+            # print(error)
+            return
+
+        # Check if KASM keys can authenticate, the "_" means data is not used
+        _, error = KasmUtils.authenticate(config)
         if error:
             print(error)
             return
-         
+
         # Prepare data for KASM user creation
         full_name = name
         words = full_name.split()
@@ -290,60 +279,42 @@ class KasmUser:
         # Debugging output 
         print(response)
 
-        
-    def post_groups(self, uid, groups):
-        '''
-        Interface to update a KASM user groups
-        Why this method does not throw exception? Even if the user is not found or not updated.
-        This method does not fail as Kasm is a complementary and 3rd party service. 
-        If failure occurs, admin or user will be required to try again.
-        
-        uid: User ID to update
-        groups: List of groups to add to user
-        '''
-       
-        # Get KASM API keys 
-        config, error = KasmUtils.get_authenticated_config()
-        if error:
-            print(error)
-            return
-        
-        # Get KASM user_id
-        kasm_user_id, error = KasmUtils.get_kasm_user_id(config, uid)
-        if kasm_user_id is None:
-            print(error)
-            return
-        
-        # update user groups
-        for group in groups:
-            response, error = KasmUtils.update_user_group(config, kasm_user_id, group)
-            if error:
-              print(error)
-              continue
-            print(response)
-            
+        # print info about user from response, find uid provided from kasm
+        print(response.json())
 
     def delete(self, uid):
         '''
         Interface to delete a KASM user.
-        Why this method does not throw exception? Even if the user is not found or not deleted.
+        Why this method does not fail? Even if the user is not found or not deleted.
         This method does not fail as Kasm is a complementary and 3rd party service. 
-        If failure occurs, admin or user will be required to try again.
+        If failure occurs, admin or user will try again.
         
         uid: User ID to delete
         '''
         
-        # Get KASM API keys 
-        config, error = KasmUtils.get_authenticated_config()
+        # Get KASM keys
+        config, error = KasmUtils.get_config()
+        if error:
+            # print(error)
+            return
+
+        # Check if KASM keys can authenticate, the "_" means data is not used
+        _, error = KasmUtils.authenticate(config)
         if error:
             print(error)
             return
         
-        # Get KASM user_id
-        kasm_user_id, error = KasmUtils.get_kasm_user_id(config, uid)
-        if kasm_user_id is None:
+        # Extract all KASM users
+        users, error = KasmUtils.get_users(config)
+        if error:
             print(error)
-            return 
+            return
+        
+        # Find the requested user_id, Kasm reference number to uid
+        kasm_user_id = KasmUtils.get_user_id(users, uid)
+        if kasm_user_id is None:
+            print({'message': f'Kasm user {uid} not found for delete', 'code': 404})
+            return
 
         # Attempt to delete the user
         response, error = KasmUtils.delete_user(config, kasm_user_id)
